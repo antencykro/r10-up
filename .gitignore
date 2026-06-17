@@ -1,0 +1,7 @@
+# Gizli / yerel dosyalar - repoya ASLA girmesin
+config_r10.py
+*.session
+*.txt
+__pycache__/
+.tg_login.json
+tg_secret.py

@@ -1,0 +1,32 @@
+name: R10 Yukari Tasima
+
+on:
+  schedule:
+    # Her 30 dakikada bir (UTC; dakika TR ile ayni). Sayac dolmamissa zararsiz atlar.
+    - cron: '13,43 * * * *'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Test modu (sonuc ne olursa Telegram at)'
+        type: boolean
+        default: true
+
+jobs:
+  up:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Konuyu yukari tasi
+        env:
+          R10_COOKIE:     ${{ secrets.R10_COOKIE }}
+          TG_BOT_TOKEN:   ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID:     ${{ secrets.TG_CHAT_ID }}
+          R10_UP_URL:     'https://www.r10.net/up.php?t=ldNdX7zqFx6iABR1041Rq0ZQ&rf=1'
+          R10_TOPIC_NAME: 'Razer/iTunes Bozum'
+          R10_TEST:       ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+        run: python r10_yukari.py

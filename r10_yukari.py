@@ -1,0 +1,204 @@
+# -*- coding: utf-8 -*-
+# R10 KONU YUKARI TASIMA - Telegram bildirimli, cok konu destekli.
+#
+# Her calistiginda SIRADAKI konuyu yukari tasimayi dener (round-robin),
+# cunku r10 limiti kullanici basina saatte 1. Sonucu Telegram'a bildirir.
+#
+# Calistirma:
+#   python r10_yukari.py          -> normal calisma (zamanlayici boyle cagirir)
+#   python r10_yukari.py test     -> test: sonuc ne olursa olsun Telegram'a yazar
+#
+# Sira "r10-sayac.txt"de tutulur. Basarili tasimada sonraki konuya gecer.
+
+import os, sys, io, json, gzip, time
+import urllib.request, urllib.parse, urllib.error
+from datetime import datetime
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+# ---- Ayarlar: once ortam degiskeni (GitHub Actions Secret), yoksa config_r10.py ----
+from types import SimpleNamespace
+try:
+    import config_r10 as _F   # yerel ayar dosyasi (sadece bu PC'de; repoda yok)
+except Exception:
+    _F = None
+
+def _get(env, attr, default=None, cast=str):
+    v = os.environ.get(env)
+    if v not in (None, ""):
+        try: return cast(v)
+        except Exception: return v
+    if _F is not None and hasattr(_F, attr):
+        return getattr(_F, attr)
+    return default
+
+def _bool(env, attr, default):
+    v = os.environ.get(env)
+    if v not in (None, ""):
+        return v.strip().lower() in ("1", "true", "yes", "evet", "on")
+    if _F is not None and hasattr(_F, attr):
+        return getattr(_F, attr)
+    return default
+
+_DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0")
+
+# Konular: bulutta tek konu env ile gelir; yerelde config dosyasindaki liste kullanilir.
+_env_url = os.environ.get("R10_UP_URL")
+if _env_url:
+    _topics = [{"ad": os.environ.get("R10_TOPIC_NAME", "Konu"), "url": _env_url}]
+elif _F is not None and hasattr(_F, "TOPICS"):
+    _topics = _F.TOPICS
+else:
+    _topics = []
+
+C = SimpleNamespace(
+    TELEGRAM_BOT_TOKEN = _get("TG_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"),
+    TELEGRAM_CHAT_ID   = _get("TG_CHAT_ID", "TELEGRAM_CHAT_ID", cast=int),
+    NOTIFY_SUCCESS     = _bool("NOTIFY_SUCCESS", "NOTIFY_SUCCESS", True),
+    NOTIFY_ERROR       = _bool("NOTIFY_ERROR", "NOTIFY_ERROR", True),
+    NOTIFY_TOO_EARLY   = _bool("NOTIFY_TOO_EARLY", "NOTIFY_TOO_EARLY", False),
+    USER_AGENT         = _get("R10_UA", "USER_AGENT", default=_DEFAULT_UA),
+    COOKIE             = _get("R10_COOKIE", "COOKIE", default=""),
+    TOPICS             = _topics,
+)
+
+SAYAC = "r10-sayac.txt"
+LOG   = "r10-log.txt"
+TEST  = (len(sys.argv) > 1 and sys.argv[1].lower() == "test") \
+        or os.environ.get("R10_TEST", "").strip().lower() in ("1", "true", "yes")
+
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def logla(msg):
+    line = f"[{now()}] {msg}"
+    print(line)
+    try:
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+def telegram(text):
+    """Admin'e DM atar. Hata olursa sessizce gecer (tasima yine de kayda gecer)."""
+    try:
+        url = f"https://api.telegram.org/bot{C.TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": C.TELEGRAM_CHAT_ID,
+            "text": text,
+            "disable_web_page_preview": "true",
+        }).encode()
+        with urllib.request.urlopen(url, data=data, timeout=30) as r:
+            res = json.load(r)
+        if not res.get("ok"):
+            logla(f"Telegram HATA: {res}")
+    except Exception as e:
+        logla(f"Telegram gonderilemedi: {e}")
+
+def sayac_oku(n):
+    try:
+        i = int(open(SAYAC, encoding="utf-8").read().strip())
+    except Exception:
+        i = 0
+    return i % n if n else 0
+
+def sayac_yaz(i):
+    try:
+        open(SAYAC, "w", encoding="utf-8").write(str(i))
+    except Exception as e:
+        logla(f"Sayac yazilamadi: {e}")
+
+def istek(url):
+    """up.php'yi cagirir. (status, body_metni) doner; a<g engeli HTTPError olur."""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": C.USER_AGENT,
+        "Cookie": C.COOKIE,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr,en;q=0.9",
+        "Referer": "https://www.r10.net/",
+    })
+    with urllib.request.urlopen(req, timeout=40) as r:
+        raw = r.read()
+        if "gzip" in (r.headers.get("Content-Encoding") or ""):
+            try: raw = gzip.decompress(raw)
+            except Exception: pass
+        body = raw.decode("utf-8", "replace")
+        return r.status, body
+
+def sonucu_coz(status, body):
+    """(durum, ozet) doner. durum: SUCCESS | TOO_EARLY | CLOUDFLARE | AUTH | UNKNOWN"""
+    low = body.lower()
+    # Cloudflare / bot engeli
+    if status in (403, 503) or "just a moment" in low or "cf-mitigated" in low \
+       or "attention required" in low or "cf-chl" in low:
+        return "CLOUDFLARE", "Cloudflare engeli / cerez gecersiz"
+    # Sure dolmadi (ASCII guvenli isaret: 'doldurma' = doldurmadiginiz)
+    if "doldurma" in low or "gerekli kalan" in low:
+        return "TOO_EARLY", "Sure dolmamis, konu tasinmadi"
+    # Oturum dusmus / giris gerekli
+    if ("giris yap" in low or "giriş yap" in low or "uye girisi" in low
+            or 'name="vb_login_username"' in low or "oturum" in low and "kapand" in low):
+        return "AUTH", "Oturum dusmus, tekrar giris gerek (cookie yenile)"
+    # Basari isaretleri (vBulletin yonlendirme mesaji)
+    if "tasindi" in low or "taşındı" in low or "basariyla" in low or "başarı" in low \
+       or "yukari tasin" in low or "yukarı taşın" in low:
+        return "SUCCESS", "Konu yukari tasindi"
+    # 200 dondu, yukaridakilerin hicbiri degil -> buyuk ihtimalle tasindi
+    if status == 200:
+        return "SUCCESS", "Islem tamam (200) - tasinmis kabul edildi"
+    return "UNKNOWN", f"Bilinmeyen cevap (HTTP {status})"
+
+def main():
+    topics = C.TOPICS
+    if not topics:
+        logla("TOPICS bos - eklenecek konu yok.")
+        if TEST: telegram("⚠️ R10: TOPICS bos, eklenecek konu yok.")
+        return
+
+    idx = sayac_oku(len(topics))
+    konu = topics[idx]
+    ad, url = konu["ad"], konu["url"]
+    logla(f"Deneniyor: #{idx} '{ad}'")
+
+    try:
+        status, body = istek(url)
+        durum, ozet = sonucu_coz(status, body)
+    except urllib.error.HTTPError as e:
+        status = e.code
+        try: body = e.read().decode("utf-8", "replace")
+        except Exception: body = ""
+        durum, ozet = sonucu_coz(status, body)
+        if durum not in ("CLOUDFLARE", "AUTH"):
+            durum, ozet = "CLOUDFLARE", f"HTTP {status} (Cloudflare/engel olabilir)"
+    except Exception as e:
+        durum, ozet = "ERROR", f"Baglanti hatasi: {e}"
+
+    logla(f"Sonuc: {durum} - {ozet}")
+
+    # Telegram metni
+    ikon = {"SUCCESS": "✅", "TOO_EARLY": "⏳", "CLOUDFLARE": "🚫",
+            "AUTH": "🔑", "UNKNOWN": "❓", "ERROR": "❌"}.get(durum, "❓")
+    msg = (f"{ikon} R10 Yukari Tasima\n\n"
+           f"Konu: {ad}\n"
+           f"Durum: {ozet}\n"
+           f"Saat: {now()}")
+
+    # Bildirim karari
+    bildir = TEST
+    if durum == "SUCCESS"   and C.NOTIFY_SUCCESS:   bildir = True
+    if durum == "TOO_EARLY" and C.NOTIFY_TOO_EARLY: bildir = True
+    if durum in ("CLOUDFLARE", "AUTH", "UNKNOWN", "ERROR") and C.NOTIFY_ERROR: bildir = True
+    if bildir:
+        telegram(msg)
+
+    # Sira ilerletme: sadece basarili tasimada sonraki konuya gec
+    if durum == "SUCCESS":
+        sayac_yaz((idx + 1) % len(topics))
+        logla(f"Sira ilerledi -> #{(idx + 1) % len(topics)}")
+    else:
+        logla("Sira ilerletilmedi (ayni konu sonraki sefer tekrar denenir).")
+
+if __name__ == "__main__":
+    main()
