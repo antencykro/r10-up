@@ -27,6 +27,7 @@ except Exception:
 def _get(env, attr, default=None, cast=str):
     v = os.environ.get(env)
     if v not in (None, ""):
+        v = v.strip().lstrip("﻿")   # BOM/bosluk temizligi (Secret'tan gelebilir)
         try: return cast(v)
         except Exception: return v
     if _F is not None and hasattr(_F, attr):
