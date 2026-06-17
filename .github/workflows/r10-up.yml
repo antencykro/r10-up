@@ -2,14 +2,22 @@ name: R10 Yukari Tasima
 
 on:
   schedule:
-    # Her 30 dakikada bir (UTC; dakika TR ile ayni). Sayac dolmamissa zararsiz atlar.
-    - cron: '13,43 * * * *'
+    # Her 5 dakikada bir "vakti geldi mi?" diye bakar. r10'a SADECE rastgele
+    # hedef (60-75 dk) dolunca istek atar; digerinde dokunmadan cikar.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       test:
-        description: 'Test modu (sonuc ne olursa Telegram at)'
+        description: 'Test modu (sonuc ne olursa Telegram at, sure beklemeden dene)'
         type: boolean
         default: true
+
+permissions:
+  contents: write   # r10-state.json'i repoya geri yazabilmek icin
+
+concurrency:
+  group: r10-up
+  cancel-in-progress: false
 
 jobs:
   up:
@@ -30,3 +38,19 @@ jobs:
           R10_TOPIC_NAME: 'Razer/iTunes Bozum'
           R10_TEST:       ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
         run: python r10_yukari.py
+
+      - name: Durumu kaydet (sadece degistiyse)
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain r10-state.json)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add r10-state.json
+            git commit -m "state: tasima kaydi [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase --autostash && git push && break
+              echo "push tekrar deneniyor ($i)..."; sleep 3
+            done
+          else
+            echo "Durum degismedi, commit yok."
+          fi

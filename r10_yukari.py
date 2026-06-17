@@ -10,9 +10,11 @@
 #
 # Sira "r10-sayac.txt"de tutulur. Basarili tasimada sonraki konuya gecer.
 
-import os, sys, io, json, gzip, time
+import os, sys, io, json, gzip, time, random
 import urllib.request, urllib.parse, urllib.error
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+TR = timezone(timedelta(hours=3))   # Turkiye saati (bulutta UTC yerine bunu goster)
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -67,11 +69,14 @@ C = SimpleNamespace(
 
 SAYAC = "r10-sayac.txt"
 LOG   = "r10-log.txt"
+STATE = "r10-state.json"     # son tasima zamani + bir sonraki rastgele hedef (dk)
+HOLD_MIN = 60                # r10 minimumu (saatte 1)
+HOLD_MAX = 75                # ust sinir - rastgele bu araliktan secilir
 TEST  = (len(sys.argv) > 1 and sys.argv[1].lower() == "test") \
         or os.environ.get("R10_TEST", "").strip().lower() in ("1", "true", "yes")
 
 def now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(TR).strftime("%Y-%m-%d %H:%M:%S")
 
 def logla(msg):
     line = f"[{now()}] {msg}"
@@ -110,6 +115,22 @@ def sayac_yaz(i):
         open(SAYAC, "w", encoding="utf-8").write(str(i))
     except Exception as e:
         logla(f"Sayac yazilamadi: {e}")
+
+def state_oku():
+    """(son_tasima_iso, hedef_dk) doner. Dosya yoksa (None, HOLD_MIN)."""
+    try:
+        with open(STATE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d.get("last_bump"), int(d.get("target_min", HOLD_MIN))
+    except Exception:
+        return None, HOLD_MIN
+
+def state_yaz(last_iso, target_min):
+    try:
+        with open(STATE, "w", encoding="utf-8") as f:
+            json.dump({"last_bump": last_iso, "target_min": target_min}, f)
+    except Exception as e:
+        logla(f"State yazilamadi: {e}")
 
 def istek(url):
     """up.php'yi cagirir. (status, body_metni) doner; a<g engeli HTTPError olur."""
@@ -158,6 +179,20 @@ def main():
         if TEST: telegram("⚠️ R10: TOPICS bos, eklenecek konu yok.")
         return
 
+    # --- Vakti geldi mi? (rastgele 60-75 dk bekleme) ---
+    last_iso, target_min = state_oku()
+    if last_iso and not TEST:
+        try:
+            last = datetime.fromisoformat(last_iso)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - last).total_seconds() / 60.0
+        except Exception:
+            elapsed = 9999
+        if elapsed < target_min:
+            logla(f"Vakti degil: {elapsed:.1f}/{target_min} dk gecti. Atlandi.")
+            return
+
     idx = sayac_oku(len(topics))
     konu = topics[idx]
     ad, url = konu["ad"], konu["url"]
@@ -194,12 +229,14 @@ def main():
     if bildir:
         telegram(msg)
 
-    # Sira ilerletme: sadece basarili tasimada sonraki konuya gec
+    # Basarili tasimada: sirayi ilerlet + bir sonraki rastgele hedefi belirle
     if durum == "SUCCESS":
         sayac_yaz((idx + 1) % len(topics))
-        logla(f"Sira ilerledi -> #{(idx + 1) % len(topics)}")
+        yeni = random.randint(HOLD_MIN, HOLD_MAX)
+        state_yaz(datetime.now(timezone.utc).isoformat(), yeni)
+        logla(f"State guncellendi. Sonraki tasima ~{yeni} dk sonra. Sira -> #{(idx + 1) % len(topics)}")
     else:
-        logla("Sira ilerletilmedi (ayni konu sonraki sefer tekrar denenir).")
+        logla("Sira/state degismedi (sonraki sefer tekrar denenir).")
 
 if __name__ == "__main__":
     main()
