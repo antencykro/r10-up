@@ -1,10 +1,16 @@
 name: R10 Yukari Tasima
 
 on:
+  # ASIL tetikleyici: disaridan (cron-job.org) saat saat repository_dispatch ile
+  # tetiklenir. GitHub'in kendi 'schedule' cron'u sik araliklarda guvenilmez
+  # (ozel repoda calismalarin cogunu atliyor), o yuzden sadece SEYREK yedek.
+  repository_dispatch:
+    types: [r10-up]
   schedule:
-    # Her 5 dakikada bir "vakti geldi mi?" diye bakar. r10'a SADECE rastgele
-    # hedef (60-75 dk) dolunca istek atar; digerinde dokunmadan cikar.
-    - cron: '*/5 * * * *'
+    # Yedek: saat basi (GitHub bunu da bazen atlar; asil is repository_dispatch).
+    # r10'a SADECE rastgele hedef (60-75 dk) dolunca istek atilir; digerinde
+    # vakti-degil deyip dokunmadan cikar (cift istek olmaz).
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       test:
