@@ -70,8 +70,8 @@ C = SimpleNamespace(
 SAYAC = "r10-sayac.txt"
 LOG   = "r10-log.txt"
 STATE = "r10-state.json"     # son tasima zamani + bir sonraki rastgele hedef (dk)
-HOLD_MIN = 60                # r10 minimumu (saatte 1)
-HOLD_MAX = 75                # ust sinir - rastgele bu araliktan secilir
+HOLD_MIN = 61                # r10 minimumu (saatte 1) + 1 dk guvenlik payi
+HOLD_MAX = 61                # sabit: her zaman 1 saat 1 dakika sonra tasi
 TEST  = (len(sys.argv) > 1 and sys.argv[1].lower() == "test") \
         or os.environ.get("R10_TEST", "").strip().lower() in ("1", "true", "yes")
 
@@ -131,6 +131,60 @@ def state_yaz(last_iso, target_min):
             json.dump({"last_bump": last_iso, "target_min": target_min}, f)
     except Exception as e:
         logla(f"State yazilamadi: {e}")
+
+# ---- cron-job.org: kendi kendine sonraki tetigi kur (kota dostu) ----
+# Mantik: her basarili tasimadan sonra cron-job.org isini "+minutes sonra TEK
+# sefer calis" sekilde guncelliyoruz. Boylece GitHub Actions saatte ~1 kez
+# calisir (15 dk'lik surekli tetik yerine) ve tasima ~61-62 dk'da net olur.
+# Anahtar yoksa veya hata olursa SESSIZCE gecer; GitHub'in saatlik yedek
+# cron'u ('17 * * * *') zincir koparsa devreye girer.
+def _cron_api(method, path, api_key, body=None):
+    url = "https://api.cron-job.org" + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": "Bearer " + api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.status, r.read().decode("utf-8", "replace")
+
+def cron_self_schedule(minutes):
+    api_key = _get("R10_CRON_API_KEY", "CRON_API_KEY", default="")
+    if not api_key:
+        return
+    try:
+        job_id = _get("R10_CRON_JOB_ID", "CRON_JOB_ID", default="")
+        if not job_id:
+            # Job'u otomatik bul: URL'si GitHub 'dispatches' olan isi sec.
+            _, raw = _cron_api("GET", "/jobs", api_key)
+            jobs = json.loads(raw).get("jobs", [])
+            cand = [j for j in jobs if "dispatch" in (j.get("url") or "").lower()]
+            if not cand:
+                logla("cron: dispatch isini bulamadim, planlama atlandi.")
+                return
+            job_id = cand[0].get("jobId")
+        # Hedef an: +minutes, sonra dakikaya yuvarla. Saniyeyi attigimiz icin
+        # tetik gercekte (minutes, minutes+1) dk araliginda olur -> 61-62 dk.
+        target = (datetime.now(TR) + timedelta(minutes=minutes + 1)).replace(second=0, microsecond=0)
+        sched = {
+            "timezone": "Europe/Istanbul",
+            "hours":   [target.hour],
+            "mdays":   [target.day],
+            "minutes": [target.minute],
+            "months":  [target.month],
+            "wdays":   [-1],   # haftanin her gunu (mday ile birlikte tek gune kilitlenir)
+            # Tek seferlik etki: tetikten ~3 dk sonra sus (kendiliginden tekrar etmesin).
+            "expiresAt": int((target + timedelta(minutes=3)).strftime("%Y%m%d%H%M%S")),
+        }
+        st, raw = _cron_api("PATCH", f"/jobs/{job_id}", api_key,
+                            {"job": {"enabled": True, "schedule": sched}})
+        if st in (200, 204):
+            logla(f"cron: sonraki tetik {target.strftime('%H:%M')} (job #{job_id}) ayarlandi.")
+        else:
+            logla(f"cron: beklenmedik yanit HTTP {st}: {raw[:200]}")
+    except Exception as e:
+        logla(f"cron: planlama hatasi (yedek cron devrede): {e}")
 
 def istek(url):
     """up.php'yi cagirir. (status, body_metni) doner; a<g engeli HTTPError olur."""
@@ -234,6 +288,7 @@ def main():
         sayac_yaz((idx + 1) % len(topics))
         yeni = random.randint(HOLD_MIN, HOLD_MAX)
         state_yaz(datetime.now(timezone.utc).isoformat(), yeni)
+        cron_self_schedule(yeni)   # cron-job.org'u +~62 dk sonraya (tek sefer) kur
         logla(f"State guncellendi. Sonraki tasima ~{yeni} dk sonra. Sira -> #{(idx + 1) % len(topics)}")
     else:
         logla("Sira/state degismedi (sonraki sefer tekrar denenir).")

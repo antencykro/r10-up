@@ -43,6 +43,7 @@ jobs:
           R10_UP_URL:     'https://www.r10.net/up.php?t=ldNdX7zqFx6iABR1041Rq0ZQ&rf=1'
           R10_TOPIC_NAME: 'Razer/iTunes Bozum'
           R10_TEST:       ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+          R10_CRON_API_KEY: ${{ secrets.R10_CRON_API_KEY }}   # cron-job.org API anahtari (kendi tetigini kurmak icin)
         run: python r10_yukari.py
 
       - name: Durumu kaydet (sadece degistiyse)
