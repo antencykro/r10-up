@@ -156,10 +156,11 @@ def cron_self_schedule(minutes):
     try:
         job_id = _get("R10_CRON_JOB_ID", "CRON_JOB_ID", default="")
         if not job_id:
-            # Job'u otomatik bul: URL'si GitHub 'dispatches' olan isi sec.
+            # Job'u otomatik bul: URL'si bu repoyu (r10-up) dispatch edeni sec.
+            # ('dispatch' tek basina yetmez; baska projelerin isleri de var.)
             _, raw = _cron_api("GET", "/jobs", api_key)
             jobs = json.loads(raw).get("jobs", [])
-            cand = [j for j in jobs if "dispatch" in (j.get("url") or "").lower()]
+            cand = [j for j in jobs if "r10-up" in (j.get("url") or "").lower()]
             if not cand:
                 logla("cron: dispatch isini bulamadim, planlama atlandi.")
                 return
