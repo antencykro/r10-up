@@ -292,7 +292,11 @@ def main():
         cron_self_schedule(yeni)   # cron-job.org'u +~62 dk sonraya (tek sefer) kur
         logla(f"State guncellendi. Sonraki tasima ~{yeni} dk sonra. Sira -> #{(idx + 1) % len(topics)}")
     else:
-        logla("Sira/state degismedi (sonraki sefer tekrar denenir).")
+        # Basarisiz (Cloudflare/oturum/erken/hata): cron'u KISA sure sonraya (~15 dk)
+        # tekrar kur ki zincir OLMESIN. Cookie/sorun duzelince kendiliginden devam eder.
+        # (Onceden sadece basarida kuruyordu -> bir hata zinciri tamamen durduruyordu.)
+        cron_self_schedule(14)
+        logla("Sira/state degismedi; ~15 dk sonra tekrar denenecek (cron yeniden kuruldu).")
 
 if __name__ == "__main__":
     main()
