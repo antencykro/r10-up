@@ -289,7 +289,9 @@ def main():
         sayac_yaz((idx + 1) % len(topics))
         yeni = random.randint(HOLD_MIN, HOLD_MAX)
         state_yaz(datetime.now(timezone.utc).isoformat(), yeni)
-        cron_self_schedule(yeni)   # cron-job.org'u +~62 dk sonraya (tek sefer) kur
+        # NOT (2026-06-29): cron-job.org self-scheduling KALDIRILDI (API kotasini yakip 429
+        # yapiyordu). Yeni mimari: cron-job.org isi (#7849973) SABIT takvimde (saatte 1)
+        # repository_dispatch atar; script API'yi cagirmaz.
         logla(f"State guncellendi. Sonraki tasima ~{yeni} dk sonra. Sira -> #{(idx + 1) % len(topics)}")
     else:
         # Basarisiz (Cloudflare/oturum/erken/hata): cron API'yi CAGIRMA (429 kotasini yorma).
