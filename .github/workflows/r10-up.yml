@@ -7,10 +7,10 @@ on:
   repository_dispatch:
     types: [r10-up]
   schedule:
-    # Yedek: saat basi (GitHub bunu da bazen atlar; asil is repository_dispatch).
-    # r10'a SADECE rastgele hedef (60-75 dk) dolunca istek atilir; digerinde
-    # vakti-degil deyip dokunmadan cikar (cift istek olmaz).
-    - cron: '17 * * * *'
+    # ASIL guvenilir tetik: saatte 3 kez (7,27,47). r10 limiti saatte 1 oldugu icin
+    # script'teki state gate (~61 dk) fazla istegi engeller; GitHub bir slotu atlasa
+    # bile saatlik pencere yakalanir. cron-job.org (repository_dispatch) bonus hassasiyet.
+    - cron: '7,27,47 * * * *'
   workflow_dispatch:
     inputs:
       test:
