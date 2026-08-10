@@ -69,9 +69,11 @@ C = SimpleNamespace(
 
 SAYAC = "r10-sayac.txt"
 LOG   = "r10-log.txt"
-STATE = "r10-state.json"     # son tasima zamani + bir sonraki rastgele hedef (dk)
-HOLD_MIN = 61                # r10 minimumu (saatte 1) + 1 dk guvenlik payi
-HOLD_MAX = 61                # sabit: her zaman 1 saat 1 dakika sonra tasi
+STATE = "r10-state.json"     # son tasima zamani + bir sonraki bekleme hedefi (dk)
+HOLD_MIN = 55                # guvenilir tetik (cron-job.org, saat basi sabit ~60.0 dk arayla
+HOLD_MAX = 55                # ateslenir) her zaman gecsin diye 60'in ALTINDA. Gercek 60 dk
+                              # r10 limitini zaten site'nin kendisi kontrol ediyor (erken
+                              # istek "sure dolmadi" diye sessizce gecer, hata/bildirim yok).
 TEST  = (len(sys.argv) > 1 and sys.argv[1].lower() == "test") \
         or os.environ.get("R10_TEST", "").strip().lower() in ("1", "true", "yes")
 
