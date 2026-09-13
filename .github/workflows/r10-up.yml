@@ -7,12 +7,12 @@ on:
   repository_dispatch:
     types: [r10-up]
   schedule:
-    # Yedek tetik: saatte 3 kez (7,27,47). ASIL tetik cron-job.org'un saat basi
-    # :17'de attigi repository_dispatch. Script'in kendi kapisi (son tasimadan
+    # Yedek tetik: saatte 3 kez (7,37,52). ASIL tetik cron-job.org'un saat basi
+    # :27'de attigi repository_dispatch; :37 ve :52 onu kacirirsa yakalar. Script'in kendi kapisi (son tasimadan
     # sonra 60 dk 20 sn) fazla istegi engelledigi icin bu slotlar cogunlukla
     # saniyeler icinde "vakti degil" deyip cikar; sadece asil tetik kacirdiginda
     # is yaparlar. Repo public oldugu icin Actions dakikalari ucretsiz.
-    - cron: '7,27,47 * * * *'
+    - cron: '7,37,52 * * * *'
   workflow_dispatch:
     inputs:
       test:

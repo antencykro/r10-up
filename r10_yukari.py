@@ -79,7 +79,12 @@ STATE = "r10-state.json"     # son tasima zamani + bir sonraki bekleme hedefi (d
 # 2 saatte bir tasiniyordu (gunde 24 yerine ~16 tasima).
 # Cozum: 60:00'in birkac saniye USTUNU hedefle; tetik erken geldiyse runner
 # icinde KISA sure uyuyup pencere acilinca iste. Boylece her saat tutuyor.
-GATE_SEC     = 60 * 60 + 20   # son tasimadan sonraki asgari bekleme (60 dk 20 sn)
+# Emniyet payi kucuk tutuldu (10 sn): her tasima bir oncekinden GATE_SEC sonra
+# olduğu icin pay ne kadar buyukse tasima saati o kadar hizli "kayar" ve bir sure
+# sonra tetigin bekleme siniri yetmez. 10 sn'de kayma saatte 10 sn (gunde 4 dk),
+# yani ~2.5 gunde bir tek saat atlanir. Pay yetmezse asagidaki tekrar denemeler
+# (40 sn arayla 2 kez) devreye girer.
+GATE_SEC     = 60 * 60 + 10   # son tasimadan sonraki asgari bekleme (60 dk 10 sn)
 MAX_WAIT_SEC = 10 * 60        # runner icinde en fazla bu kadar uyu; fazlasi -> bu saati atla
 HOLD_MIN = HOLD_MAX = GATE_SEC // 60   # state'e bilgi amacli yazilir (geri uyumluluk)
 TEST  = (len(sys.argv) > 1 and sys.argv[1].lower() == "test") \
