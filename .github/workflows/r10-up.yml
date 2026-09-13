@@ -7,9 +7,11 @@ on:
   repository_dispatch:
     types: [r10-up]
   schedule:
-    # ASIL guvenilir tetik: saatte 3 kez (7,27,47). r10 limiti saatte 1 oldugu icin
-    # script'teki state gate (~61 dk) fazla istegi engeller; GitHub bir slotu atlasa
-    # bile saatlik pencere yakalanir. cron-job.org (repository_dispatch) bonus hassasiyet.
+    # Yedek tetik: saatte 3 kez (7,27,47). ASIL tetik cron-job.org'un saat basi
+    # :17'de attigi repository_dispatch. Script'in kendi kapisi (son tasimadan
+    # sonra 60 dk 20 sn) fazla istegi engelledigi icin bu slotlar cogunlukla
+    # saniyeler icinde "vakti degil" deyip cikar; sadece asil tetik kacirdiginda
+    # is yaparlar. Repo public oldugu icin Actions dakikalari ucretsiz.
     - cron: '7,27,47 * * * *'
   workflow_dispatch:
     inputs:
@@ -28,6 +30,8 @@ concurrency:
 jobs:
   up:
     runs-on: ubuntu-latest
+    # Script pencere acilana kadar en fazla 10 dk uyuyabilir; takilirsa kessin.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 

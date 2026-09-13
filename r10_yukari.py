@@ -70,10 +70,18 @@ C = SimpleNamespace(
 SAYAC = "r10-sayac.txt"
 LOG   = "r10-log.txt"
 STATE = "r10-state.json"     # son tasima zamani + bir sonraki bekleme hedefi (dk)
-HOLD_MIN = 55                # guvenilir tetik (cron-job.org, saat basi sabit ~60.0 dk arayla
-HOLD_MAX = 55                # ateslenir) her zaman gecsin diye 60'in ALTINDA. Gercek 60 dk
-                              # r10 limitini zaten site'nin kendisi kontrol ediyor (erken
-                              # istek "sure dolmadi" diye sessizce gecer, hata/bildirim yok).
+
+# --- r10'un KATI 60 dakikalik penceresi (2026-09-13 duzeltmesi) ---
+# r10, son yukari tasimadan itibaren TAM 60:00 dolmadan yeni istegi reddediyor.
+# Tetik her saat ayni dakika-saniyede (:17:0X) ateslendigi ve bir onceki tasima
+# da ayni saniyeye denk geldigi icin istek surekli 59:56-60:02 araligina
+# dusuyordu -> saatlerin yaklasik yarisi "sure dolmadi" ile bosa gidiyor, konu
+# 2 saatte bir tasiniyordu (gunde 24 yerine ~16 tasima).
+# Cozum: 60:00'in birkac saniye USTUNU hedefle; tetik erken geldiyse runner
+# icinde KISA sure uyuyup pencere acilinca iste. Boylece her saat tutuyor.
+GATE_SEC     = 60 * 60 + 20   # son tasimadan sonraki asgari bekleme (60 dk 20 sn)
+MAX_WAIT_SEC = 10 * 60        # runner icinde en fazla bu kadar uyu; fazlasi -> bu saati atla
+HOLD_MIN = HOLD_MAX = GATE_SEC // 60   # state'e bilgi amacli yazilir (geri uyumluluk)
 TEST  = (len(sys.argv) > 1 and sys.argv[1].lower() == "test") \
         or os.environ.get("R10_TEST", "").strip().lower() in ("1", "true", "yes")
 
@@ -236,37 +244,53 @@ def main():
         if TEST: telegram("⚠️ R10: TOPICS bos, eklenecek konu yok.")
         return
 
-    # --- Vakti geldi mi? (rastgele 60-75 dk bekleme) ---
-    last_iso, target_min = state_oku()
+    # --- Vakti geldi mi? (r10 penceresi tam 60:00; biz 60:20'yi hedefliyoruz) ---
+    last_iso, _ = state_oku()
     if last_iso and not TEST:
         try:
             last = datetime.fromisoformat(last_iso)
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
-            elapsed = (datetime.now(timezone.utc) - last).total_seconds() / 60.0
+            elapsed = (datetime.now(timezone.utc) - last).total_seconds()
         except Exception:
-            elapsed = 9999
-        if elapsed < target_min:
-            logla(f"Vakti degil: {elapsed:.1f}/{target_min} dk gecti. Atlandi.")
+            elapsed = 9e9
+        kalan = GATE_SEC - elapsed
+        if kalan > MAX_WAIT_SEC:
+            logla(f"Vakti degil: {elapsed/60:.1f} dk gecti, {kalan/60:.1f} dk daha var "
+                  f"(runner bekleme siniri {MAX_WAIT_SEC//60} dk). Atlandi.")
             return
+        if kalan > 0:
+            logla(f"Tetik {kalan:.0f} sn erken; r10 penceresi acilana kadar bekleniyor...")
+            time.sleep(kalan)
 
     idx = sayac_oku(len(topics))
     konu = topics[idx]
     ad, url = konu["ad"], konu["url"]
     logla(f"Deneniyor: #{idx} '{ad}'")
 
-    try:
-        status, body = istek(url)
-        durum, ozet = sonucu_coz(status, body)
-    except urllib.error.HTTPError as e:
-        status = e.code
-        try: body = e.read().decode("utf-8", "replace")
-        except Exception: body = ""
-        durum, ozet = sonucu_coz(status, body)
-        if durum not in ("CLOUDFLARE", "AUTH"):
-            durum, ozet = "CLOUDFLARE", f"HTTP {status} (Cloudflare/engel olabilir)"
-    except Exception as e:
-        durum, ozet = "ERROR", f"Baglanti hatasi: {e}"
+    def dene():
+        try:
+            status, body = istek(url)
+            return sonucu_coz(status, body)
+        except urllib.error.HTTPError as e:
+            try: body = e.read().decode("utf-8", "replace")
+            except Exception: body = ""
+            d, o = sonucu_coz(e.code, body)
+            if d not in ("CLOUDFLARE", "AUTH", "TOO_EARLY"):
+                d, o = "CLOUDFLARE", f"HTTP {e.code} (Cloudflare/engel olabilir)"
+            return d, o
+        except Exception as e:
+            return "ERROR", f"Baglanti hatasi: {e}"
+
+    # Kayitli zaman ile r10'un kendi saati birkac saniye kayabiliyor: "sure
+    # dolmadi" cevabinda hemen pes etme, kisa araliklarla 2 kez daha dene.
+    durum, ozet = dene()
+    for _ in range(2):
+        if durum != "TOO_EARLY":
+            break
+        logla("Sunucu 'sure dolmadi' dedi; 40 sn sonra tekrar denenecek.")
+        time.sleep(40)
+        durum, ozet = dene()
 
     logla(f"Sonuc: {durum} - {ozet}")
 
@@ -294,11 +318,12 @@ def main():
         # NOT (2026-06-29): cron-job.org self-scheduling KALDIRILDI (API kotasini yakip 429
         # yapiyordu). Yeni mimari: cron-job.org isi (#7849973) SABIT takvimde (saatte 1)
         # repository_dispatch atar; script API'yi cagirmaz.
-        logla(f"State guncellendi. Sonraki tasima ~{yeni} dk sonra. Sira -> #{(idx + 1) % len(topics)}")
+        logla(f"State guncellendi. Sonraki pencere ~{GATE_SEC/60:.1f} dk sonra acilir. "
+              f"Sira -> #{(idx + 1) % len(topics)}")
     else:
         # Basarisiz (Cloudflare/oturum/erken/hata): cron API'yi CAGIRMA (429 kotasini yorma).
         # Retry'i artik GitHub'in 20 dk'lik guvenilir schedule'i yapiyor -> zincir olmez.
-        logla("Sira/state degismedi; GitHub schedule ~20 dk sonra tekrar deneyecek.")
+        logla("Sira/state degismedi; bir sonraki saatlik tetik tekrar deneyecek.")
 
 if __name__ == "__main__":
     main()
